@@ -272,6 +272,18 @@ async function verifyDiploma(photoDataUrl, hintText) {
   return JSON.parse(match ? match[0] : clean);
 }
 
+async function loadPostsFromStorage() {
+  let index = parseOr(await safeGet("kleo_post_index", true), null);
+  if (!index) {
+    index = SEED_POSTS.map((p) => p.id);
+    await safeSet("kleo_post_index", index, true);
+    await Promise.all(SEED_POSTS.map((p) => safeSet(`kleo_post_${p.id}`, p, true)));
+    return SEED_POSTS;
+  }
+  const loaded = await Promise.all(index.map(async (id) => parseOr(await safeGet(`kleo_post_${id}`, true), null)));
+  return loaded.filter(Boolean);
+}
+
 /* ---------------- Laurel (signature rank badge) ---------------- */
 function Laurel({ rank, size = 40 }) {
   const tier = rank === 1 ? "var(--gold)" : rank === 2 ? "var(--silver)" : rank === 3 ? "var(--bronze)" : null;
@@ -1253,6 +1265,11 @@ export default function App() {
   const [chatUserId, setChatUserId] = useState(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [saveError, setSaveError] = useState(false);
+  function flashSaveError() {
+    setSaveError(true);
+    setTimeout(() => setSaveError(false), 4500);
+  }
 
   useEffect(() => {
     (async () => {
@@ -1261,8 +1278,7 @@ export default function App() {
       let boardObj = parseOr(await safeGet("kleo_leaderboard", true), null);
       if (!boardObj) { boardObj = { ...SEED_LEADERBOARD }; await safeSet("kleo_leaderboard", boardObj, true); }
 
-      let postsArr = parseOr(await safeGet("kleo_posts", true), null);
-      if (!postsArr) { postsArr = SEED_POSTS; await safeSet("kleo_posts", postsArr, true); }
+      const postsArr = await loadPostsFromStorage();
 
       const journalArr = parseOr(await safeGet("kleo_journal", false), []);
       const achievementsArr = parseOr(await safeGet("kleo_achievements", false), []);
@@ -1290,21 +1306,24 @@ export default function App() {
     });
     const nextBoard = { ...board, [p.userId]: { name: p.name, avatar: p.avatar, university: p.university, score, ...counts } };
     setBoard(nextBoard);
-    await safeSet("kleo_leaderboard", nextBoard, true);
+    const ok = await safeSet("kleo_leaderboard", nextBoard, true);
+    if (!ok) flashSaveError();
   }
 
   async function finishOnboarding({ email, name, avatar, university, grade, interest }) {
     const userId = uid();
     const prof = { userId, email, name, avatar, university, grade, interest, bio: "", createdAt: Date.now() };
     setProfile(prof);
-    await safeSet("kleo_profile", prof, false);
+    const ok = await safeSet("kleo_profile", prof, false);
+    if (!ok) flashSaveError();
     await syncBoard([], prof);
   }
 
   async function updateProfile(patch) {
     const next = { ...profile, ...patch };
     setProfile(next);
-    await safeSet("kleo_profile", next, false);
+    const ok = await safeSet("kleo_profile", next, false);
+    if (!ok) flashSaveError();
     await syncBoard(achievements, next);
   }
 
@@ -1312,54 +1331,75 @@ export default function App() {
     const entry = { id: uid(), createdAt: Date.now(), ...data };
     const next = [entry, ...achievements];
     setAchievements(next);
-    await safeSet("kleo_achievements", next, false);
+    const ok = await safeSet("kleo_achievements", next, false);
+    if (!ok) flashSaveError();
     await syncBoard(next, profile);
   }
   async function deleteAchievement(id) {
     const next = achievements.filter((a) => a.id !== id);
     setAchievements(next);
-    await safeSet("kleo_achievements", next, false);
+    const ok = await safeSet("kleo_achievements", next, false);
+    if (!ok) flashSaveError();
     await syncBoard(next, profile);
   }
 
   async function addPost({ text, tag, photo }) {
     const post = { id: uid(), authorId: profile.userId, authorName: profile.name, authorAvatar: profile.avatar, tag, photo, text, likes: [], comments: [], createdAt: Date.now() };
+    const oldIds = posts.map((p) => p.id);
     const next = [post, ...posts].slice(0, 60);
+    const removedIds = oldIds.filter((id) => !next.some((p) => p.id === id));
     setPosts(next);
     setCompose(false);
-    await safeSet("kleo_posts", next, true);
+    const ok1 = await safeSet(`kleo_post_${post.id}`, post, true);
+    const ok2 = await safeSet("kleo_post_index", next.map((p) => p.id), true);
+    await Promise.all(removedIds.map((id) => safeDelete(`kleo_post_${id}`, true)));
+    if (!ok1 || !ok2) flashSaveError();
   }
   async function likePost(id) {
+    let updated = null;
     const next = posts.map((p) => {
       if (p.id !== id) return p;
       const has = p.likes.includes(profile.userId);
-      return { ...p, likes: has ? p.likes.filter((x) => x !== profile.userId) : [...p.likes, profile.userId] };
+      updated = { ...p, likes: has ? p.likes.filter((x) => x !== profile.userId) : [...p.likes, profile.userId] };
+      return updated;
     });
     setPosts(next);
-    await safeSet("kleo_posts", next, true);
+    if (updated) {
+      const ok = await safeSet(`kleo_post_${id}`, updated, true);
+      if (!ok) flashSaveError();
+    }
   }
   async function addComment(postId, text) {
-    const next = posts.map((p) => p.id === postId
-      ? { ...p, comments: [...(p.comments || []), { id: uid(), authorId: profile.userId, authorName: profile.name, authorAvatar: profile.avatar, text, createdAt: Date.now() }] }
-      : p);
+    let updated = null;
+    const next = posts.map((p) => {
+      if (p.id !== postId) return p;
+      updated = { ...p, comments: [...(p.comments || []), { id: uid(), authorId: profile.userId, authorName: profile.name, authorAvatar: profile.avatar, text, createdAt: Date.now() }] };
+      return updated;
+    });
     setPosts(next);
-    await safeSet("kleo_posts", next, true);
+    if (updated) {
+      const ok = await safeSet(`kleo_post_${postId}`, updated, true);
+      if (!ok) flashSaveError();
+    }
   }
 
   async function addJournal(data) {
     const next = [{ id: uid(), ...data, createdAt: Date.now() }, ...journal];
     setJournal(next);
-    await safeSet("kleo_journal", next, false);
+    const ok = await safeSet("kleo_journal", next, false);
+    if (!ok) flashSaveError();
   }
   async function editJournal(id, data) {
     const next = journal.map((e) => (e.id === id ? { ...e, ...data } : e));
     setJournal(next);
-    await safeSet("kleo_journal", next, false);
+    const ok = await safeSet("kleo_journal", next, false);
+    if (!ok) flashSaveError();
   }
   async function deleteJournal(id) {
     const next = journal.filter((e) => e.id !== id);
     setJournal(next);
-    await safeSet("kleo_journal", next, false);
+    const ok = await safeSet("kleo_journal", next, false);
+    if (!ok) flashSaveError();
   }
 
   async function logout() {
@@ -1385,7 +1425,8 @@ export default function App() {
     const mine = { id: uid(), from: "me", text, createdAt: Date.now() };
     const withMine = { ...messages, [otherId]: [...(messages[otherId] || []), mine] };
     setMessages(withMine);
-    await safeSet("kleo_messages", withMine, false);
+    const ok = await safeSet("kleo_messages", withMine, false);
+    if (!ok) flashSaveError();
     if (SEED_META[otherId]) {
       setTimeout(() => {
         setMessages((prev) => {
@@ -1436,6 +1477,7 @@ export default function App() {
     .k-topbar { display:flex; align-items:center; justify-content:space-between; padding:10px 6px 10px 14px; font-weight:800; font-size:16px; letter-spacing:0.02em; border-bottom:1px solid var(--line); background:rgba(255,255,255,0.9); backdrop-filter:blur(6px); position:sticky; top:0; z-index:5; color:var(--text); }
     .k-topicon { border:none; background:none; color:var(--text); width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; }
     .k-topicon:hover { background:#F3F4F6; }
+    .k-save-error { display:flex; align-items:center; gap:8px; font-size:11.5px; color:#92400E; background:rgba(245,158,11,0.12); border-bottom:1px solid rgba(245,158,11,0.35); padding:8px 14px; line-height:1.4; }
     .k-card { background:var(--surface); border:1px solid var(--line); border-radius:16px; box-shadow:0 1px 3px rgba(16,23,42,0.04); }
     .k-card[data-me="true"] { border-color: var(--gold); box-shadow:0 0 0 1px var(--gold); }
     .k-rankrow:hover { border-color:#D8D8DE; }
@@ -1509,6 +1551,11 @@ export default function App() {
           <button className="k-topicon" type="button" onClick={() => setMessagesOpen(true)}><MessageSquare size={18} /></button>
         </div>
       </div>
+      {saveError && (
+        <div className="k-save-error">
+          <AlertTriangle size={13} /> Не удалось сохранить изменения. Проверь соединение — данные могут не сохраниться при перезагрузке.
+        </div>
+      )}
       <div style={{ paddingBottom: 8 }}>
         {tab === "feed" && <FeedScreen me={profile} posts={posts} onLike={likePost} onComment={addComment} onCompose={() => setCompose(true)} onOpenProfile={openProfile} />}
         {tab === "rating" && <RatingScreen me={profile} board={board} achievements={achievements} onOpenProfile={openProfile} />}
