@@ -3,7 +3,7 @@ import {
   Trophy, Plus, Heart, X, User, BookOpen, Camera,
   Pencil, Trash2, Sparkles, Link as LinkIcon, ShieldCheck, Loader2, Mail,
   MessageCircle, Send, LogOut, Calendar, GraduationCap, Briefcase, ExternalLink,
-  Info, ChevronLeft, BadgeCheck, AlertTriangle
+  Info, ChevronLeft, BadgeCheck, AlertTriangle, Search, MessageSquare
 } from "lucide-react";
 
 /* ---------------- storage helpers ---------------- */
@@ -214,6 +214,14 @@ function eventIcon(type) {
   if (type === "forum") return Calendar;
   return GraduationCap;
 }
+
+const AUTO_REPLIES = [
+  "Привет! Спасибо, что написал(а) 🙂",
+  "О, интересно! Как готовишься к следующей олимпиаде?",
+  "Круто, давай как-нибудь сравним результаты!",
+  "Спасибо! Заходи на мой профиль, там есть свежие достижения.",
+  "Согласен(на), звучит интересно — расскажи подробнее?",
+];
 
 /* ---------------- AI diploma verification ---------------- */
 async function verifyDiploma(photoDataUrl, hintText) {
@@ -990,8 +998,110 @@ function SurveyEditor({ profile, onClose, onSubmit }) {
   );
 }
 
+/* ---------------- Search ---------------- */
+function SearchScreen({ query, setQuery, profiles, posts, onOpenProfile, onLike, onComment, viewerId, onBack }) {
+  const q = query.trim().toLowerCase();
+  const profileMatches = q ? profiles.filter((p) => p.name.toLowerCase().includes(q) || (p.university || "").toLowerCase().includes(q) || (p.interest || "").toLowerCase().includes(q)) : [];
+  const postMatches = q ? posts.filter((p) => p.text.toLowerCase().includes(q)) : [];
+  return (
+    <div>
+      <div style={{ padding: "14px 16px 0", display: "flex", alignItems: "center", gap: 10 }}>
+        <IconBtn onClick={onBack}><ChevronLeft size={18} /></IconBtn>
+        <input className="k-input" autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Искать людей и посты…" />
+      </div>
+      <div style={{ padding: "16px 14px 90px", display: "flex", flexDirection: "column", gap: 16 }}>
+        {!q && <Empty text="Начни вводить имя, вуз, интерес или текст поста." />}
+        {q && (
+          <>
+            <div>
+              <div style={{ fontSize: 11.5, color: "var(--muted)", fontWeight: 700, marginBottom: 8, letterSpacing: 0.4 }}>ПРОФИЛИ</div>
+              {profileMatches.length === 0 ? <Empty text="Профили не найдены." /> : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {profileMatches.map((p) => (
+                    <button key={p.id} type="button" className="k-card" style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", cursor: "pointer" }} onClick={() => onOpenProfile(p.id)}>
+                      <Ava value={p.avatar} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>{p.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{p.university}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <div style={{ fontSize: 11.5, color: "var(--muted)", fontWeight: 700, marginBottom: 8, letterSpacing: 0.4 }}>ПОСТЫ</div>
+              {postMatches.length === 0 ? <Empty text="Посты не найдены." /> : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {postMatches.map((p) => <PostCard key={p.id} post={p} me={{ userId: viewerId }} onLike={onLike} onComment={onComment} onOpenProfile={onOpenProfile} />)}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Messages ---------------- */
+function ChatsScreen({ messages, resolveIdentity, onOpenChat, onBack }) {
+  const rows = Object.entries(messages)
+    .map(([id, thread]) => ({ id, identity: resolveIdentity(id), last: thread[thread.length - 1] }))
+    .filter((r) => r.identity && r.last)
+    .sort((a, b) => b.last.createdAt - a.last.createdAt);
+  return (
+    <div>
+      <div style={{ padding: "14px 16px 0" }}><IconBtn onClick={onBack}><ChevronLeft size={18} /></IconBtn></div>
+      <ScreenHeader title="Сообщения" subtitle="Личные переписки" />
+      <div style={{ padding: "0 14px 90px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.length === 0 && <Empty text="Пока нет переписок. Напиши кому-нибудь со страницы профиля." />}
+        {rows.map((r) => (
+          <button key={r.id} type="button" className="k-card" style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", cursor: "pointer" }} onClick={() => onOpenChat(r.id)}>
+            <Ava value={r.identity.avatar} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5, color: "var(--text)" }}>{r.identity.name}</div>
+              <div style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.last.from === "me" ? "Вы: " : ""}{r.last.text}</div>
+            </div>
+            <div style={{ fontSize: 10.5, color: "var(--muted)", flexShrink: 0 }}>{timeAgo(r.last.createdAt)}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+function ChatView({ identity, thread, onBack, onSend }) {
+  const [text, setText] = useState("");
+  function submit() {
+    if (!text.trim()) return;
+    onSend(text.trim());
+    setText("");
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
+        <IconBtn onClick={onBack}><ChevronLeft size={18} /></IconBtn>
+        <Ava value={identity.avatar} />
+        <div style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>{identity.name}</div>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 8px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {thread.length === 0 && <Empty text="Напиши первое сообщение." />}
+        {thread.map((m) => (
+          <div key={m.id} style={{ display: "flex", justifyContent: m.from === "me" ? "flex-end" : "flex-start" }}>
+            <div className={m.from === "me" ? "k-bubble-me" : "k-bubble-them"}>{m.text}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 6, padding: "10px 14px 16px", borderTop: "1px solid var(--line)", flexShrink: 0 }}>
+        <input className="k-input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Написать сообщение…" onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+        <IconBtn onClick={submit} disabled={!text.trim()}><Send size={14} /></IconBtn>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- Profile view (own tab AND public profiles) ---------------- */
-function ProfileView({ data, rankInfo, posts, isMe, viewerId, onBack, onUpdate, onAddAchievement, onDeleteAchievement, onLogout, onLike, onComment, onOpenProfile }) {
+function ProfileView({ data, rankInfo, posts, isMe, viewerId, targetUserId, onBack, onUpdate, onAddAchievement, onDeleteAchievement, onLogout, onLike, onComment, onOpenProfile, onMessage }) {
   const [innerTab, setInnerTab] = useState("posts");
   const [editingProfile, setEditingProfile] = useState(false);
   const [editingSurvey, setEditingSurvey] = useState(false);
@@ -1045,6 +1155,11 @@ function ProfileView({ data, rankInfo, posts, isMe, viewerId, onBack, onUpdate, 
         <div style={{ display: "flex", gap: 8, padding: "14px 16px 4px" }}>
           <button type="button" className="k-btn-outline" style={{ flex: 1 }} onClick={() => setEditingProfile(true)}>Редактировать профиль</button>
           <button type="button" className="k-btn-outline" style={{ flex: 1 }} onClick={share}>Поделиться</button>
+        </div>
+      )}
+      {!isMe && (
+        <div style={{ display: "flex", gap: 8, padding: "14px 16px 4px" }}>
+          <button type="button" className="k-btn-outline" style={{ flex: 1 }} onClick={() => onMessage(targetUserId)}><MessageSquare size={13} style={{ marginRight: 6, verticalAlign: -2 }} />Написать</button>
         </div>
       )}
 
@@ -1133,6 +1248,11 @@ export default function App() {
   const [tab, setTab] = useState("feed");
   const [compose, setCompose] = useState(false);
   const [viewProfileId, setViewProfileId] = useState(null);
+  const [messages, setMessages] = useState({});
+  const [messagesOpen, setMessagesOpen] = useState(false);
+  const [chatUserId, setChatUserId] = useState(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -1146,11 +1266,13 @@ export default function App() {
 
       const journalArr = parseOr(await safeGet("kleo_journal", false), []);
       const achievementsArr = parseOr(await safeGet("kleo_achievements", false), []);
+      const messagesObj = parseOr(await safeGet("kleo_messages", false), {});
 
       setBoard(boardObj);
       setPosts(postsArr);
       setJournal(journalArr);
       setAchievements(achievementsArr);
+      setMessages(messagesObj);
       setProfile(prof);
       setLoading(false);
     })();
@@ -1252,6 +1374,37 @@ export default function App() {
     setViewProfileId(userId);
   }
 
+  function resolveIdentity(userId) {
+    if (!profile) return null;
+    if (userId === profile.userId) return { name: profile.name, avatar: profile.avatar };
+    const meta = SEED_META[userId];
+    return meta ? { name: meta.name, avatar: meta.avatar } : null;
+  }
+
+  async function sendMessage(otherId, text) {
+    const mine = { id: uid(), from: "me", text, createdAt: Date.now() };
+    const withMine = { ...messages, [otherId]: [...(messages[otherId] || []), mine] };
+    setMessages(withMine);
+    await safeSet("kleo_messages", withMine, false);
+    if (SEED_META[otherId]) {
+      setTimeout(() => {
+        setMessages((prev) => {
+          const reply = { id: uid(), from: "them", text: AUTO_REPLIES[Math.floor(Math.random() * AUTO_REPLIES.length)], createdAt: Date.now() };
+          const updated = { ...prev, [otherId]: [...(prev[otherId] || []), reply] };
+          safeSet("kleo_messages", updated, false);
+          return updated;
+        });
+      }, 1000 + Math.random() * 1200);
+    }
+  }
+
+  const searchableProfiles = useMemo(() => {
+    if (!profile) return [];
+    const list = [{ id: profile.userId, name: profile.name, avatar: profile.avatar, university: profile.university, interest: profile.interest }];
+    Object.entries(SEED_META).forEach(([id, m]) => list.push({ id, name: m.name, avatar: m.avatar, university: m.university, interest: null }));
+    return list;
+  }, [profile]);
+
   function rankFor(userId) {
     const list = Object.entries(board).map(([id, s]) => ({ id, score: s.score || 0 }));
     list.sort((a, b) => b.score - a.score);
@@ -1280,7 +1433,9 @@ export default function App() {
       border-radius:26px; overflow:hidden; box-shadow:0 0 0 1px var(--line); }
     .k-display { font-weight:800; letter-spacing:-0.01em; }
     .k-wordmark { font-weight:800; font-size:32px; letter-spacing:0.01em; color:var(--text); }
-    .k-topbar { display:flex; align-items:center; justify-content:center; padding:14px 0 10px; font-weight:800; font-size:16px; letter-spacing:0.02em; border-bottom:1px solid var(--line); background:rgba(255,255,255,0.9); backdrop-filter:blur(6px); position:sticky; top:0; z-index:5; color:var(--text); }
+    .k-topbar { display:flex; align-items:center; justify-content:space-between; padding:10px 6px 10px 14px; font-weight:800; font-size:16px; letter-spacing:0.02em; border-bottom:1px solid var(--line); background:rgba(255,255,255,0.9); backdrop-filter:blur(6px); position:sticky; top:0; z-index:5; color:var(--text); }
+    .k-topicon { border:none; background:none; color:var(--text); width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+    .k-topicon:hover { background:#F3F4F6; }
     .k-card { background:var(--surface); border:1px solid var(--line); border-radius:16px; box-shadow:0 1px 3px rgba(16,23,42,0.04); }
     .k-card[data-me="true"] { border-color: var(--gold); box-shadow:0 0 0 1px var(--gold); }
     .k-rankrow:hover { border-color:#D8D8DE; }
@@ -1325,6 +1480,8 @@ export default function App() {
     .k-sheet-head { display:flex; align-items:center; justify-content:space-between; padding:15px 16px; font-weight:700; border-bottom:1px solid var(--line); color:var(--text); }
     .k-sheet-body { padding:16px; overflow-y:auto; }
     .k-fullsheet { position:absolute; inset:0; background:var(--bg); z-index:8; overflow-y:auto; }
+    .k-bubble-me { background:var(--text); color:#fff; padding:9px 13px; border-radius:16px; font-size:13px; max-width:75%; line-height:1.4; }
+    .k-bubble-them { background:#F1F1F4; color:var(--text); padding:9px 13px; border-radius:16px; font-size:13px; max-width:75%; line-height:1.4; }
     .k-spin { animation: k-rotate 1s linear infinite; display:inline-block; }
     @keyframes k-rotate { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
   `;
@@ -1344,7 +1501,14 @@ export default function App() {
   return (
     <div className="k-root">
       <style>{styles}</style>
-      <div className="k-topbar">KLEO</div>
+      <div className="k-topbar">
+        <div style={{ width: 68 }} />
+        <div style={{ flex: 1, textAlign: "center" }}>KLEO</div>
+        <div style={{ display: "flex", gap: 2, paddingRight: 6 }}>
+          <button className="k-topicon" type="button" onClick={() => setSearchOpen(true)}><Search size={18} /></button>
+          <button className="k-topicon" type="button" onClick={() => setMessagesOpen(true)}><MessageSquare size={18} /></button>
+        </div>
+      </div>
       <div style={{ paddingBottom: 8 }}>
         {tab === "feed" && <FeedScreen me={profile} posts={posts} onLike={likePost} onComment={addComment} onCompose={() => setCompose(true)} onOpenProfile={openProfile} />}
         {tab === "rating" && <RatingScreen me={profile} board={board} achievements={achievements} onOpenProfile={openProfile} />}
@@ -1353,9 +1517,9 @@ export default function App() {
         {tab === "profile" && (
           <ProfileView
             data={resolveProfileData(profile.userId)} rankInfo={rankInfo} posts={posts.filter((p) => p.authorId === profile.userId)}
-            isMe viewerId={profile.userId} onBack={null}
+            isMe viewerId={profile.userId} targetUserId={profile.userId} onBack={null}
             onUpdate={updateProfile} onAddAchievement={addAchievement} onDeleteAchievement={deleteAchievement} onLogout={logout}
-            onLike={likePost} onComment={addComment} onOpenProfile={openProfile}
+            onLike={likePost} onComment={addComment} onOpenProfile={openProfile} onMessage={() => {}}
           />
         )}
       </div>
@@ -1372,9 +1536,37 @@ export default function App() {
         <div className="k-fullsheet">
           <ProfileView
             data={resolveProfileData(viewProfileId)} rankInfo={rankFor(viewProfileId)} posts={posts.filter((p) => p.authorId === viewProfileId)}
-            isMe={false} viewerId={profile.userId} onBack={() => setViewProfileId(null)}
+            isMe={false} viewerId={profile.userId} targetUserId={viewProfileId} onBack={() => setViewProfileId(null)}
             onUpdate={() => {}} onAddAchievement={() => {}} onDeleteAchievement={() => {}} onLogout={() => {}}
             onLike={likePost} onComment={addComment} onOpenProfile={openProfile}
+            onMessage={(id) => { setViewProfileId(null); setMessagesOpen(true); setChatUserId(id); }}
+          />
+        </div>
+      )}
+
+      {searchOpen && (
+        <div className="k-fullsheet">
+          <SearchScreen
+            query={searchQuery} setQuery={setSearchQuery} profiles={searchableProfiles} posts={posts}
+            onOpenProfile={(id) => { setSearchOpen(false); openProfile(id); }}
+            onLike={likePost} onComment={addComment} viewerId={profile.userId}
+            onBack={() => setSearchOpen(false)}
+          />
+        </div>
+      )}
+
+      {messagesOpen && !chatUserId && (
+        <div className="k-fullsheet">
+          <ChatsScreen messages={messages} resolveIdentity={resolveIdentity} onOpenChat={setChatUserId} onBack={() => setMessagesOpen(false)} />
+        </div>
+      )}
+      {messagesOpen && chatUserId && (
+        <div className="k-fullsheet" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <ChatView
+            identity={resolveIdentity(chatUserId) || { name: "Пользователь", avatar: "👤" }}
+            thread={messages[chatUserId] || []}
+            onBack={() => setChatUserId(null)}
+            onSend={(text) => sendMessage(chatUserId, text)}
           />
         </div>
       )}
